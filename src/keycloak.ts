@@ -28,6 +28,7 @@ const AURORA_SERVERLESS_SUPPORTED_REGIONS = [
   'eu-west-2',
   'eu-west-3',
   'cn-northwest-1',
+  'us-gov-west-1',
 ];
 
 /**
@@ -90,6 +91,46 @@ export class KeycloakVersion {
   public static readonly V21_0_1 = KeycloakVersion.of('21.0.1');
 
   /**
+   * Keycloak version 21.0.2
+   */
+  public static readonly V21_0_2 = KeycloakVersion.of('21.0.2');
+
+  /**
+   * Keycloak version 21.1.0
+   */
+    public static readonly V21_1_0 = KeycloakVersion.of('21.1.0');
+
+  /**
+   * Keycloak version 21.1.1
+   */
+  public static readonly V21_1_1 = KeycloakVersion.of('21.1.1');
+
+  /**
+   * Keycloak version 21.1.2
+   */
+  public static readonly V21_1_2 = KeycloakVersion.of('21.1.2');
+
+  /**
+   * Keycloak version 22.0.0
+   */
+    public static readonly V22_0_0 = KeycloakVersion.of('22.0.0');
+
+  /**
+   * Keycloak version 22.0.1
+   */
+  public static readonly V22_0_1 = KeycloakVersion.of('22.0.1');
+
+  /**
+   * Keycloak version 22.0.2
+   */
+  public static readonly V22_0_2 = KeycloakVersion.of('22.0.2');
+
+  /**
+   * Keycloak version 22.0.3
+   */
+  public static readonly V22_0_3 = KeycloakVersion.of('22.0.3');
+
+  /**
    * Custom cluster version
    * @param version custom version number
    */
@@ -103,11 +144,13 @@ export class KeycloakVersion {
 
 interface dockerImageMap {
   'aws': string;
+  'aws-us-gov': string;
   'aws-cn': string;
 }
 
 const KEYCLOAK_DOCKER_IMAGE_URI_MAP: dockerImageMap = {
   'aws': 'quay.io/keycloak/keycloak:',
+  'aws-us-gov': 'quay.io/keycloak/keycloak:',
   'aws-cn': '048912060910.dkr.ecr.cn-northwest-1.amazonaws.com.cn/dockerhub/jboss/keycloak:',
 };
 
