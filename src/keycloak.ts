@@ -180,6 +180,24 @@ export interface AutoScaleTask {
 
 export interface KeyCloakProps {
   /**
+     * Use a network load balancer instead of an application load balancer
+     *
+     * @default false
+     */
+  readonly networkLoadBalancer?: boolean;
+  /**
+   * Container port default 8443 for non quarkas
+   *
+   * @default 8443
+   */
+  readonly containerPort?: number;
+  /**
+   * Use a custom container command 
+   *
+   * @default ["start"]
+   */
+  readonly containerCommand?: Array<string>;
+  /**
    * The Keycloak version for the cluster.
    */
   readonly keycloakVersion: KeycloakVersion;
@@ -390,9 +408,14 @@ export class KeyCloak extends Construct {
       containerImage: props.containerImage,
       taskCpu: props.taskCpu,
       taskMemory: props.taskMemory,
+      containerCommand: props.containerCommand,
+      containerPort: props.containerPort,
+      networkLoadBalancer: props.networkLoadBalancer ?? false
     });
 
-    this.applicationLoadBalancer = keycloakContainerService.applicationLoadBalancer;
+    if (props.networkLoadBalancer){this.networkLoadBalancer = keycloakContainerService.networkLoadBalancer;}
+    else{this.applicationLoadBalancer = keycloakContainerService.applicationLoadBalancer;}
+
     if (!cdk.Stack.of(this).templateOptions.description) {
       cdk.Stack.of(this).templateOptions.description = '(SO8021) - Deploy keycloak on AWS with cdk-keycloak construct library';
     }
@@ -663,6 +686,28 @@ export interface ContainerServiceProps {
    */
   readonly env?: { [key: string]: string };
   /**
+   * The secret variables to pass to the keycloak container
+   */
+  readonly secrets?: { [key: string]: ecs.Secret; };
+  /**
+   * Use a custom container command 
+   *
+   * @default ["start"] || undefined
+   */
+  readonly containerCommand?: Array<string>;
+  /**
+   * Use a network load balancer instead of an application load balancer
+   *
+   * @default false
+   */
+  readonly networkLoadBalancer?: boolean;
+  /**
+   * Container port default 8443 for non quarkas
+   *
+   * @default 8443
+   */
+  readonly containerPort?: number;
+  /**
    * Keycloak version for the container image
    */
   readonly keycloakVersion: KeycloakVersion;
@@ -759,13 +804,14 @@ export interface ContainerServiceProps {
 export class ContainerService extends Construct {
   readonly service: ecs.FargateService;
   readonly applicationLoadBalancer: elbv2.ApplicationLoadBalancer;
+  readonly networkLoadBalancer: elbv2.NetworkLoadBalancer;
   constructor(scope: Construct, id: string, props: ContainerServiceProps) {
     super(scope, id);
 
     const region = cdk.Stack.of(this).region;
-    let containerPort = 8443;
+    let containerPort = props.containerPort ?? 8443;
     let protocol = elbv2.ApplicationProtocol.HTTPS;
-    let command = undefined;
+    let command = props.containerCommand ?? undefined;
     let s3PingBucket: s3.Bucket | undefined = undefined;
     const image = props.containerImage ?? ecs.ContainerImage.fromRegistry(this.getKeyCloakDockerImageUri(props.keycloakVersion.version));
     const isQuarkusDistribution = parseInt(props.keycloakVersion.version.split('.')[0]) > 16;
@@ -800,9 +846,9 @@ export class ContainerService extends Construct {
     // if this is a quarkus distribution
     if (isQuarkusDistribution) {
       s3PingBucket = new s3.Bucket(this, 'keycloak_s3_ping');
-      containerPort = 8080;
+      containerPort = props.containerPort ?? 8080;
       protocol = elbv2.ApplicationProtocol.HTTP;
-      command = ['start', '--optimized'];
+      command = props.containerCommand ?? ['start', '--optimized'];
       environment = {
         JAVA_OPTS_APPEND: `-Djgroups.s3.region_name=${region} -Djgroups.s3.bucket_name=${s3PingBucket!.bucketName}`,
         // We have selected the cache stack of 'ec2' which uses S3_PING under the hood
@@ -854,7 +900,7 @@ export class ContainerService extends Construct {
       image,
       command,
       environment: Object.assign(environment, props.env),
-      secrets,
+      secrets: Object.assign(secrets, props.secrets),
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'keycloak',
         logGroup,
@@ -895,6 +941,37 @@ export class ContainerService extends Construct {
       });
     };
 
+    if (props.networkLoadBalancer){
+
+      this.networkLoadBalancer = new elbv2.NetworkLoadBalancer(this, 'NLB', {
+          vpc,
+          vpcSubnets: props.internetFacing ? props.publicSubnets : props.privateSubnets,
+          internetFacing: props.internetFacing,
+      });
+      printOutput(this, 'EndpointURL', `https://${this.networkLoadBalancer.loadBalancerDnsName}`);
+          
+      const listener = this.networkLoadBalancer.addListener('TcpListener', {
+          port: 443,
+          protocol: elbv2.Protocol.TCP
+      });
+
+      listener.addTargets('ECSTarget2', {
+          targets: [this.service],
+          healthCheck: {
+              protocol: elbv2.Protocol.TCP
+          },
+          // set slow_start.duration_seconds to 60
+          // see https://docs.aws.amazon.com/cli/latest/reference/elbv2/modify-target-group-attributes.html
+          slowStart: cdk.Duration.seconds(60),
+          stickinessCookieDuration: props.stickinessCookieDuration ?? cdk.Duration.days(1),
+          port: containerPort,
+          protocol: elbv2.Protocol.TCP,
+      });
+
+      this.service.connections.allowFrom(ec2.Peer.ipv4(props.vpc.vpcCidrBlock), ec2.Port.tcp(containerPort), "vpc");
+  }
+  else{
+
     this.applicationLoadBalancer = new elbv2.ApplicationLoadBalancer(this, 'ALB', {
       vpc,
       vpcSubnets: props.internetFacing ? props.publicSubnets : props.privateSubnets,
@@ -918,10 +995,18 @@ export class ContainerService extends Construct {
       port: containerPort,
       protocol,
     });
+  }
 
     // allow task execution role to read the secrets
     props.database.secret.grantRead(taskDefinition.executionRole!);
     props.keycloakSecret.grantRead(taskDefinition.executionRole!);
+
+    if (props.secrets){
+      for (let key in props.secrets){
+        let value = props.secrets[key];
+        value.grantRead(taskDefinition.executionRole)
+      }
+    }
 
     // allow ecs task connect to database
     props.database.connections.allowDefaultPortFrom(this.service);
