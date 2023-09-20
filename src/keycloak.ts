@@ -362,6 +362,7 @@ export class KeyCloak extends Construct {
   readonly vpc: ec2.IVpc;
   readonly db?: Database;
   readonly applicationLoadBalancer: elbv2.ApplicationLoadBalancer;
+  readonly networkLoadBalancer: elbv2.NetworkLoadBalancer;
   readonly keycloakSecret: secretsmanager.ISecret;
   constructor(scope: Construct, id: string, props: KeyCloakProps) {
     super(scope, id);
@@ -643,40 +644,31 @@ export class Database extends Construct {
   private _createServerlessV2Cluster(props: DatabaseProps): DatabaseConfig {
     const dbCluster = new rds.DatabaseCluster(this, 'DBCluster', {
       engine: props.clusterEngine ?? rds.DatabaseClusterEngine.auroraMysql({
-        version: rds.AuroraMysqlEngineVersion.VER_3_02_0,
+          version: rds.AuroraMysqlEngineVersion.VER_3_02_2,
       }),
+      writer: rds.ClusterInstance.serverlessV2('writer'),
+      vpc: props.vpc,
+      vpcSubnets: props.databaseSubnets,
+
       defaultDatabaseName: 'keycloak',
-      deletionProtection: true,
       credentials: rds.Credentials.fromGeneratedSecret('admin'),
-      instanceProps: {
-        vpc: props.vpc,
-        vpcSubnets: props.databaseSubnets,
-        // Specify serverless Instance Type
-        instanceType: new ec2.InstanceType('serverless'),
-      },
-      // Set default parameter group for Aurora MySQL 8.0
       parameterGroup: rds.ParameterGroup.fromParameterGroupName(this, 'ParameterGroup', 'default.aurora-mysql8.0'),
       backup: {
-        retention: props.backupRetention ?? cdk.Duration.days(7),
+          retention: props.backupRetention ?? cdk.Duration.days(7),
       },
       storageEncrypted: true,
       removalPolicy: props.removalPolicy ?? cdk.RemovalPolicy.RETAIN,
-    });
-    // Set Serverless V2 Scaling Configuration
-    // TODO: Use cleaner way to set scaling configuration.
-    // https://github.com/aws/aws-cdk/issues/20197
-    (
-      dbCluster.node.findChild('Resource') as rds.CfnDBCluster
-    ).serverlessV2ScalingConfiguration = {
-      minCapacity: props.minCapacity ?? 0.5,
-      maxCapacity: props.maxCapacity ?? 10,
-    };
-    return {
+
+      serverlessV2MinCapacity: props.minCapacity ?? 0.5,
+      serverlessV2MaxCapacity: props.maxCapacity ?? 10
+
+  });
+  return {
       connections: dbCluster.connections,
       endpoint: dbCluster.clusterEndpoint.hostname,
       identifier: dbCluster.clusterIdentifier,
-      secret: dbCluster.secret!,
-    };
+      secret: dbCluster.secret,
+  };
   }
 }
 
